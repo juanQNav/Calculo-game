@@ -2,6 +2,8 @@
 
 Sitio estático para estudiantes de Cálculo A. Practica derivadas e integrales en tres modos que comparten progreso — Cartas, Detective y Aventura — o repasa primero el **Formulario** con pestañas de Derivación e Integración. El botón **Home** siempre vuelve a la pantalla de bienvenida. El avance se guarda en el navegador con `localStorage`.
 
+**Jugar en línea:** [Cálculo A en GitHub Pages](https://juanqnav.github.io/Calculo-game/).
+
 ## Vista previa local
 
 Usa un servidor local ligero para probar las rutas relativas y el guardado en `localStorage`:
