@@ -1,2 +1,5 @@
 # ignore pdf 
 *.pdf
+
+# ignore agent
+.atl/

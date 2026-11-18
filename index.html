@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cálculo A — Juego de Derivadas e Integrales</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <a href="#main" class="skip-link">Saltar al contenido</a>
+
+  <header class="site-header">
+    <div class="container header-content">
+      <h1>Cálculo A</h1>
+      <nav aria-label="Navegación principal">
+        <button class="nav-btn" data-mode="home" aria-pressed="true">Home</button>
+        <button class="nav-btn" data-mode="formulario" aria-pressed="false">Formulario</button>
+        <button class="nav-btn" data-mode="cartas" aria-pressed="false">Cartas</button>
+        <button class="nav-btn" data-mode="detective" aria-pressed="false">Detective</button>
+        <button class="nav-btn" data-mode="aventura" aria-pressed="false">Aventura</button>
+        <button class="nav-btn" data-mode="progreso" aria-pressed="false">Progreso</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="container">
+    <section id="home-view" class="view" aria-live="polite">
+      <div class="hero">
+        <h2>Entrena derivadas e integrales</h2>
+        <p>Elige un modo para practicar. Tu avance se guarda en este navegador.</p>
+        <div class="mode-cards">
+          <button class="mode-card" data-mode="cartas">
+            <h3>Cartas</h3>
+            <p>Recuerda la fórmula antes de revelar la respuesta.</p>
+          </button>
+          <button class="mode-card" data-mode="detective">
+            <h3>Detective</h3>
+            <p>Escoge la técnica y la pista antes de resolver.</p>
+          </button>
+          <button class="mode-card" data-mode="aventura">
+            <h3>Aventura</h3>
+            <p>Retos mezclados sin etiquetas de tema.</p>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section id="formulario-view" class="view hidden" aria-live="polite">
+      <div class="hero">
+        <h2>Formulario</h2>
+        <p>Repasa las fórmulas de derivación e integración antes de jugar.</p>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Ramas del formulario">
+        <button id="tab-derivacion" class="tab-btn" role="tab" aria-selected="true" aria-controls="panel-derivacion" tabindex="0">Derivación</button>
+        <button id="tab-integracion" class="tab-btn" role="tab" aria-selected="false" aria-controls="panel-integracion" tabindex="-1">Integración</button>
+      </div>
+
+      <div id="panel-derivacion" class="tabpanel" role="tabpanel" aria-labelledby="tab-derivacion">
+        <div id="deriv-families" class="families"></div>
+      </div>
+      <div id="panel-integracion" class="tabpanel hidden" role="tabpanel" aria-labelledby="tab-integracion">
+        <div id="int-families" class="families"></div>
+      </div>
+    </section>
+
+    <section id="game-view" class="view hidden" aria-live="polite">
+      <div class="game-header">
+        <h2 id="mode-title">Modo</h2>
+        <div class="hud" aria-label="Estadísticas de la sesión">
+          <span id="score-display">Aciertos: 0 / 0</span>
+          <span id="streak-display">Racha: 0</span>
+        </div>
+      </div>
+
+      <div id="progress-bar" class="progress-bar" aria-hidden="true">
+        <div id="progress-fill" class="progress-fill"></div>
+      </div>
+
+      <article id="question-card" class="question-card">
+        <div class="topic-pill" id="topic-pill" hidden>Tema</div>
+        <p id="question-clue" class="question-clue" hidden></p>
+        <div id="question-prompt" class="question-prompt"></div>
+
+        <form id="answer-form" class="answer-form" novalidate>
+          <fieldset id="options-fieldset">
+            <legend id="options-legend">Selecciona la respuesta</legend>
+            <div id="options-list" class="options-list"></div>
+          </fieldset>
+          <button type="submit" class="btn-primary" id="submit-btn">Comprobar</button>
+        </form>
+
+        <div id="flashcard-controls" class="flashcard-controls hidden">
+          <button type="button" class="btn-primary" id="reveal-btn">Mostrar respuesta</button>
+          <div id="recall-actions" class="recall-actions hidden">
+            <p class="flashcard-answer-label">Respuesta correcta</p>
+            <div id="flashcard-answer" class="flashcard-answer"></div>
+            <div id="flashcard-explanation" class="flashcard-explanation explanation"></div>
+            <div class="recall-buttons">
+              <button type="button" class="btn-primary" id="remembered-btn">La recordé</button>
+              <button type="button" class="btn-secondary" id="review-btn">Necesito repasarla</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="feedback" class="feedback hidden" role="status" aria-live="assertive">
+          <p id="feedback-result"></p>
+          <div id="feedback-explanation" class="explanation"></div>
+          <button type="button" class="btn-primary" id="next-btn">Siguiente</button>
+        </div>
+      </article>
+    </section>
+
+    <section id="progress-view" class="view hidden" aria-live="polite">
+      <h2>Tu progreso</h2>
+      <p class="progress-intro">El avance se comparte entre los tres modos y se guarda localmente en tu navegador.</p>
+      <div id="progress-grid" class="progress-grid"></div>
+      <div class="progress-actions">
+        <button type="button" class="btn-secondary" id="reset-progress-btn">Reiniciar progreso</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>Cálculo A — Juego de práctica. Sin dependencias externas.</p>
+    </div>
+  </footer>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="js/content.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
