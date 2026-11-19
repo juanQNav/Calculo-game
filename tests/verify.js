@@ -123,7 +123,7 @@ function createMockElement(tag = "div", attrs = {}) {
   return el;
 }
 
-function loadAppWithMocks(content) {
+function loadAppWithMocks(content, randomFn = Math.random, sharedStorage = null) {
   const ids = [
     "home-view",
     "formulario-view",
@@ -216,7 +216,7 @@ function loadAppWithMocks(content) {
     createElement: (tag) => createMockElement(tag),
   };
 
-  const storage = {};
+  const storage = sharedStorage !== null ? sharedStorage : {};
   const ls = {
     getItem: (k) => storage[k] || null,
     setItem: (k, v) => {
@@ -227,13 +227,16 @@ function loadAppWithMocks(content) {
     },
   };
 
+  const ctxMath = Object.create(Math);
+  ctxMath.random = randomFn;
+
   const ctx = {
     self: {},
     window: {},
     document: doc,
     localStorage: ls,
     console,
-    Math,
+    Math: ctxMath,
     Date,
     JSON,
     setTimeout,
@@ -528,6 +531,234 @@ function testDetectiveFlow(content) {
   );
 }
 
+function makeDeterministicRandom() {
+  // 0 → primera elegible; 0.05/0.07 → segunda y tercera elegibles en el pool actual de Cartas.
+  const values = [0, 0.05, 0.07];
+  let i = 0;
+  return () => values[i++] || 0;
+}
+
+function testReviewQueueFlow(content) {
+  console.log("\n--- Cola de repaso espaciado ---");
+  const random = makeDeterministicRandom();
+  const { app, elements } = loadAppWithMocks(content, random);
+
+  app.setMode("cartas");
+  const q = app.getCurrentQuestion();
+  assert(q && q.modes.includes("cartas"), "Cartas carga una pregunta del modo");
+
+  elements["reveal-btn"].dispatchEvent({ type: "click" });
+  elements["review-btn"].dispatchEvent({ type: "click" });
+
+  const stateAfterQueue = app.getState();
+  const queuedEntry = stateAfterQueue.reviewQueue.find((e) => e.id === q.id);
+  assert(queuedEntry, `"Necesito repasarla" encola la pregunta actual (${q.id})`);
+  assert(queuedEntry.dueAfter === 2, "La tarjeta encolada tiene dueAfter = REVIEW_DELAY");
+
+  const firstNext = app.getCurrentQuestion();
+  assert(firstNext.id !== q.id, "La tarjeta encolada no vuelve inmediatamente");
+
+  // Primera autoevaluación de otra carta: envejece la cola.
+  elements["reveal-btn"].dispatchEvent({ type: "click" });
+  elements["remembered-btn"].dispatchEvent({ type: "click" });
+
+  const stateAfterOne = app.getState();
+  const queuedAfterOne = stateAfterOne.reviewQueue.find((e) => e.id === q.id);
+  assert(queuedAfterOne, "La tarjeta sigue en la cola tras una autoevaluación");
+  assert(queuedAfterOne.dueAfter === 1, "La tarjeta encolada envejece a dueAfter = 1");
+  const secondNext = app.getCurrentQuestion();
+  assert(secondNext.id !== q.id, "La tarjeta encolada no aparece tras una autoevaluación");
+  assert(secondNext.id !== firstNext.id, "Las dos cartas intermedias son distintas entre sí");
+
+  // Segunda autoevaluación de otra carta: la cola vence.
+  elements["reveal-btn"].dispatchEvent({ type: "click" });
+  elements["remembered-btn"].dispatchEvent({ type: "click" });
+
+  const stateAfterTwo = app.getState();
+  const queuedAfterTwo = stateAfterTwo.reviewQueue.find((e) => e.id === q.id);
+  assert(queuedAfterTwo, "La tarjeta permanece encolada mientras está por vencer");
+  assert(queuedAfterTwo.dueAfter === 0, "La tarjeta encolada está vencida (dueAfter = 0)");
+
+  const dueNext = app.getCurrentQuestion();
+  assert(dueNext.id === q.id, "La tarjeta vencida se prioriza como siguiente carta");
+
+  // Marcarla recordada la saca de la cola.
+  elements["reveal-btn"].dispatchEvent({ type: "click" });
+  elements["remembered-btn"].dispatchEvent({ type: "click" });
+
+  const stateAfterRemembered = app.getState();
+  assert(
+    !stateAfterRemembered.reviewQueue.some((e) => e.id === q.id),
+    "La tarjeta recordada se elimina de la cola en memoria"
+  );
+}
+
+function testReviewQueuePersistence(content) {
+  console.log("\n--- Persistencia de la cola de repaso ---");
+  const STORAGE_KEY = "calculoA_progress";
+  const random = makeDeterministicRandom();
+  const storage = {};
+
+  const { app: app1, elements: el1 } = loadAppWithMocks(content, random, storage);
+  app1.setMode("cartas");
+  const q = app1.getCurrentQuestion();
+
+  el1["reveal-btn"].dispatchEvent({ type: "click" });
+  el1["review-btn"].dispatchEvent({ type: "click" });
+
+  // Envejecer dos veces para que la tarjeta esté vencida al recargar.
+  for (let i = 0; i < 2; i++) {
+    el1["reveal-btn"].dispatchEvent({ type: "click" });
+    el1["remembered-btn"].dispatchEvent({ type: "click" });
+  }
+
+  const beforeReload = app1.getState();
+  assert(
+    beforeReload.reviewQueue.some((e) => e.id === q.id && e.dueAfter === 0),
+    "La tarjeta está vencida antes de recargar"
+  );
+  const savedBefore = JSON.parse(storage[STORAGE_KEY] || "{}");
+  assert(
+    savedBefore.reviewQueue && savedBefore.reviewQueue.some((e) => e.id === q.id && e.dueAfter === 0),
+    "La cola vencida se guarda en localStorage"
+  );
+
+  // Recargar la aplicación con el mismo localStorage simulado.
+  const { app: app2, elements: el2 } = loadAppWithMocks(content, random, storage);
+  const afterReload = app2.getState();
+  assert(
+    afterReload.reviewQueue.some((e) => e.id === q.id && e.dueAfter === 0),
+    "La cola vencida persiste tras recargar"
+  );
+
+  app2.setMode("cartas");
+  const qAfterReload = app2.getCurrentQuestion();
+  assert(qAfterReload.id === q.id, "La tarjeta vencida persiste y se prioriza tras recargar");
+
+  el2["reveal-btn"].dispatchEvent({ type: "click" });
+  el2["remembered-btn"].dispatchEvent({ type: "click" });
+
+  const finalState = app2.getState();
+  assert(
+    !finalState.reviewQueue.some((e) => e.id === q.id),
+    "La tarjeta recordada se elimina de la cola en memoria tras recargar"
+  );
+  const savedAfter = JSON.parse(storage[STORAGE_KEY] || "{}");
+  assert(
+    !savedAfter.reviewQueue || !savedAfter.reviewQueue.some((e) => e.id === q.id),
+    "La tarjeta recordada desaparece del localStorage"
+  );
+}
+
+function testReviewQueueRequeue(content) {
+  console.log("\n--- Reencolado tras otro fallo ---");
+  const { app, elements } = loadAppWithMocks(content, makeDeterministicRandom(), {});
+  app.setMode("cartas");
+  const missedQuestion = app.getCurrentQuestion();
+
+  elements["reveal-btn"].dispatchEvent({ type: "click" });
+  elements["review-btn"].dispatchEvent({ type: "click" });
+
+  for (let i = 0; i < 2; i++) {
+    elements["reveal-btn"].dispatchEvent({ type: "click" });
+    elements["remembered-btn"].dispatchEvent({ type: "click" });
+  }
+
+  assert(
+    app.getCurrentQuestion().id === missedQuestion.id,
+    "La tarjeta vuelve a aparecer después de dos tarjetas distintas"
+  );
+
+  elements["reveal-btn"].dispatchEvent({ type: "click" });
+  elements["review-btn"].dispatchEvent({ type: "click" });
+
+  const requeued = app.getState().reviewQueue.find((entry) => entry.id === missedQuestion.id);
+  assert(requeued && requeued.dueAfter === 2, "Un segundo fallo la reencola con dos tarjetas de espera");
+  assert(
+    app.getCurrentQuestion().id !== missedQuestion.id,
+    "La tarjeta reencolada no se repite inmediatamente"
+  );
+}
+
+function testReviewQueueNormalization(content) {
+  console.log("\n--- Normalización de la cola de repaso ---");
+  const STORAGE_KEY = "calculoA_progress";
+  const storage = {};
+  const cartasIds = content.questions
+    .filter((q) => q.modes.includes("cartas"))
+    .map((q) => q.id);
+  const [idPositive, idNegative, idNull, idNonNumeric, idDuplicate] = cartasIds;
+
+  storage[STORAGE_KEY] = JSON.stringify({
+    version: 2,
+    reviewQueue: [
+      null,
+      { id: "", dueAfter: 0 },
+      { dueAfter: 0 },
+      { id: "unknown-card-id", dueAfter: 0 },
+      { id: idPositive, dueAfter: 1.9 },
+      { id: idDuplicate, dueAfter: 5 },
+      { id: idDuplicate, dueAfter: 10 },
+      { id: idNegative, dueAfter: -3 },
+      { id: idNull, dueAfter: null },
+      { id: idNonNumeric, dueAfter: "not-a-number" },
+    ],
+  });
+
+  const { app } = loadAppWithMocks(content, () => 0, storage);
+  const queue = app.getState().reviewQueue;
+
+  assert(
+    queue.length === 3,
+    "Normalización conserva exactamente las entradas válidas no duplicadas"
+  );
+
+  const positive = queue.find((e) => e.id === idPositive);
+  assert(positive, "Conserva la entrada con dueAfter positivo fraccionario");
+  assert(Number.isInteger(positive.dueAfter), "dueAfter fraccionario se trunca a entero");
+  assert(positive.dueAfter === 1, "dueAfter 1.9 se trunca a 1");
+
+  const negative = queue.find((e) => e.id === idNegative);
+  assert(negative, "Conserva la entrada con dueAfter negativo");
+  assert(negative.dueAfter === 0, "dueAfter negativo se fija a 0");
+
+  const duplicate = queue.find((e) => e.id === idDuplicate);
+  assert(duplicate, "Conserva la primera aparición de un ID duplicado");
+  assert(duplicate.dueAfter === 5, "Descarta la segunda aparición del ID duplicado");
+
+  assert(!queue.some((e) => e.id === idNull), "Descarta entrada con dueAfter null");
+  assert(
+    !queue.some((e) => e.id === idNonNumeric),
+    "Descarta entrada con dueAfter no numérico"
+  );
+  assert(
+    !queue.some((e) => e.id === "unknown-card-id"),
+    "Descarta IDs desconocidos"
+  );
+  assert(queue.every((e) => e.dueAfter >= 0), "Ningún dueAfter normalizado es negativo");
+}
+
+function testReviewQueueFallback(content) {
+  console.log("\n--- Respaldo cuando todas las cartas están encoladas ---");
+  const { app } = loadAppWithMocks(content, () => 0, {});
+  const state = app.getState();
+  const cartasQuestions = content.questions.filter((q) => q.modes.includes("cartas"));
+  const expectedNext = cartasQuestions[cartasQuestions.length - 1];
+  state.reviewQueue = cartasQuestions.map((q, i) => ({
+    id: q.id,
+    dueAfter: i === cartasQuestions.length - 1 ? 1 : i + 5,
+  }));
+  const originalOrder = state.reviewQueue.map((entry) => entry.id);
+
+  app.setMode("cartas");
+  const q = app.getCurrentQuestion();
+  assert(q && q.id === expectedNext.id, "El respaldo elige la carta próxima a vencer");
+  assert(
+    state.reviewQueue.map((entry) => entry.id).join(",") === originalOrder.join(","),
+    "El respaldo no altera el orden persistido de la cola"
+  );
+}
+
 function testHtmlStructure() {
   console.log("\n--- Estructura HTML ---");
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
@@ -782,6 +1013,11 @@ function main() {
   testCartasFlow(content);
   testAventuraApplication(content);
   testDetectiveFlow(content);
+  testReviewQueueFlow(content);
+  testReviewQueuePersistence(content);
+  testReviewQueueRequeue(content);
+  testReviewQueueNormalization(content);
+  testReviewQueueFallback(content);
 
   console.log("\n=== Resumen ===");
   if (failures === 0) {

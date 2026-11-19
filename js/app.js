@@ -14,6 +14,10 @@
   const formulaOrder = content.formulaOrder;
 
   // --- Utilidades ---
+  const REVIEW_DELAY_MIN = 2;
+  const REVIEW_DELAY_MAX = 7;
+  const CARTAS_MODE = "cartas";
+
   function shuffle(array) {
     const copy = array.slice();
     for (let i = copy.length - 1; i > 0; i--) {
@@ -23,8 +27,7 @@
     return copy;
   }
 
-  function pickQuestion(mode, recentIds) {
-    const pool = questions.filter((q) => q.modes.includes(mode));
+  function weightedPick(pool, recentIds) {
     const weighted = pool.map((q) => {
       const stats = state.progress[q.topic] || { total: 0, correct: 0 };
       const recentPenalty = recentIds.includes(q.id) ? 0.4 : 1;
@@ -41,15 +44,53 @@
     return weighted[weighted.length - 1]?.q || pool[0];
   }
 
+  function pickQuestion(mode, recentIds) {
+    const pool = questions.filter((q) => q.modes.includes(mode));
+    if (mode !== CARTAS_MODE) {
+      return weightedPick(pool, recentIds);
+    }
+
+    // 1. Priorizar tarjetas de repaso que ya estén vencidas (FIFO).
+    const dueEntry = state.reviewQueue.find((entry) => {
+      if (entry.dueAfter > 0) return false;
+      return pool.some((q) => q.id === entry.id);
+    });
+    if (dueEntry) {
+      return pool.find((q) => q.id === dueEntry.id);
+    }
+
+    // 2. Excluir las tarjetas encoladas pero aún no vencidas del sorteo normal.
+    const queuedIds = new Set(
+      state.reviewQueue
+        .filter((entry) => entry.dueAfter > 0)
+        .map((entry) => entry.id),
+    );
+    const eligible = pool.filter((q) => !queuedIds.has(q.id));
+    if (eligible.length > 0) {
+      return weightedPick(eligible, recentIds);
+    }
+
+    // 3. Respaldo seguro: si todas las cartas están encoladas, elegir la próxima a vencerse (FIFO).
+    const fallback = state.reviewQueue
+      .filter((entry) => pool.some((q) => q.id === entry.id))
+      .sort((a, b) => a.dueAfter - b.dueAfter)[0];
+    if (fallback) {
+      return pool.find((q) => q.id === fallback.id);
+    }
+
+    return pool[0];
+  }
+
   // --- Estado ---
   const defaultState = {
-    version: 1,
+    version: 2,
     progress: {},
     skills: {
       recall: { correct: 0, total: 0 },
       methodSelection: { correct: 0, total: 0 },
       application: { correct: 0, total: 0 },
     },
+    reviewQueue: [],
   };
 
   let state = loadState();
@@ -71,7 +112,8 @@
   }
 
   function normalizeState(parsed) {
-    if (!parsed || typeof parsed !== "object") return structuredClone(defaultState);
+    if (!parsed || typeof parsed !== "object")
+      return structuredClone(defaultState);
     const result = { ...structuredClone(defaultState), ...parsed };
 
     // Normalizar contadores de habilidades (protege contra campos parciales o NaN).
@@ -98,6 +140,25 @@
       });
     }
 
+    // Normalizar cola de repaso: ignorar IDs desconocidos, duplicados o datos malformados.
+    result.reviewQueue = [];
+    if (Array.isArray(parsed.reviewQueue)) {
+      const cartasIds = new Set(
+        questions.filter((q) => q.modes.includes(CARTAS_MODE)).map((q) => q.id),
+      );
+      const seen = new Set();
+      parsed.reviewQueue.forEach((entry) => {
+        if (!entry || typeof entry !== "object") return;
+        const id = String(entry.id || "");
+        if (!id || !cartasIds.has(id) || seen.has(id)) return;
+        const rawDue = entry.dueAfter;
+        if (typeof rawDue !== "number" || !Number.isFinite(rawDue)) return;
+        const dueAfter = Math.max(0, Math.trunc(rawDue));
+        seen.add(id);
+        result.reviewQueue.push({ id, dueAfter });
+      });
+    }
+
     return result;
   }
 
@@ -117,6 +178,34 @@
     recentIds = [];
     renderProgress();
     showToast("Progreso reiniciado.");
+  }
+
+  // --- Cola de repaso espaciado ---
+  function removeFromReviewQueue(id) {
+    state.reviewQueue = state.reviewQueue.filter((entry) => entry.id !== id);
+  }
+
+  function randomDelayInRange(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  function addToReviewQueue(id) {
+    removeFromReviewQueue(id);
+    state.reviewQueue.push({
+      id,
+      dueAfter: randomDelayInRange(REVIEW_DELAY_MIN, REVIEW_DELAY_MAX),
+    });
+    saveState();
+  }
+
+  function ageReviewQueue() {
+    if (state.reviewQueue.length > 0) {
+      state.reviewQueue = state.reviewQueue.map((entry) => ({
+        ...entry,
+        dueAfter: Math.max(0, entry.dueAfter - 1),
+      }));
+    }
+    saveState();
   }
 
   // --- DOM refs ---
@@ -273,7 +362,11 @@
   }
 
   function modeLabel(mode) {
-    return { cartas: "Cartas", detective: "Detective", aventura: "Aventura" }[mode] || mode;
+    return (
+      { cartas: "Cartas", detective: "Detective", aventura: "Aventura" }[
+        mode
+      ] || mode
+    );
   }
 
   // --- Juego ---
@@ -336,7 +429,8 @@
   function revealFlashcard() {
     revealBtn.hidden = true;
     recallActions.classList.remove("hidden");
-    flashcardAnswer.innerHTML = currentQuestion.options[currentQuestion.correctIndex];
+    flashcardAnswer.innerHTML =
+      currentQuestion.options[currentQuestion.correctIndex];
     flashcardExplanation.innerHTML = currentQuestion.explanation;
     if (typeof rememberedBtn.focus === "function") {
       rememberedBtn.focus();
@@ -344,13 +438,20 @@
   }
 
   function handleRemembered() {
-    recordResult(currentQuestion, true, "cartas");
-    startQuestion("cartas");
+    const q = currentQuestion;
+    recordResult(q, true, CARTAS_MODE);
+    removeFromReviewQueue(q.id);
+    ageReviewQueue();
+    startQuestion(CARTAS_MODE);
   }
 
   function handleReview() {
-    recordResult(currentQuestion, false, "cartas");
-    startQuestion("cartas");
+    const q = currentQuestion;
+    recordResult(q, false, CARTAS_MODE);
+    removeFromReviewQueue(q.id);
+    ageReviewQueue();
+    addToReviewQueue(q.id);
+    startQuestion(CARTAS_MODE);
   }
 
   function renderDetectiveQuestion() {
@@ -360,7 +461,8 @@
     submitBtn.textContent = "Comprobar";
 
     if (!detectiveState) {
-      const { techniqueOptions, correctTechnique, clueOptions, correctClue } = content.getDetectiveOptions(currentQuestion);
+      const { techniqueOptions, correctTechnique, clueOptions, correctClue } =
+        content.getDetectiveOptions(currentQuestion);
       detectiveState = {
         stage: "technique",
         techniqueOptions,
@@ -378,7 +480,8 @@
       renderOptions(detectiveState.techniqueOptions, "technique");
     } else if (detectiveState.stage === "clue") {
       questionClue.hidden = true;
-      optionsLegend.textContent = "Paso 2: ¿cuál es la pista de reconocimiento?";
+      optionsLegend.textContent =
+        "Paso 2: ¿cuál es la pista de reconocimiento?";
       renderOptions(detectiveState.clueOptions, "clue");
     } else {
       questionClue.hidden = false;
@@ -408,17 +511,23 @@
     const buttons = optionsList.querySelectorAll(`[data-kind="${kind}"]`);
     buttons.forEach((b) => b.classList.remove("selected"));
     btn.classList.add("selected");
-    if (kind === "technique") detectiveState.techniqueSelected = Number(btn.dataset.index);
-    if (kind === "clue") detectiveState.clueSelected = Number(btn.dataset.index);
+    if (kind === "technique")
+      detectiveState.techniqueSelected = Number(btn.dataset.index);
+    if (kind === "clue")
+      detectiveState.clueSelected = Number(btn.dataset.index);
   }
 
   function getSelectedIndex(kind) {
-    const selected = optionsList.querySelector(`.option-btn.selected[data-kind="${kind}"]`);
+    const selected = optionsList.querySelector(
+      `.option-btn.selected[data-kind="${kind}"]`,
+    );
     return selected ? Number(selected.dataset.index) : -1;
   }
 
   function clearStageSelection(kind) {
-    optionsList.querySelectorAll(`[data-kind="${kind}"]`).forEach((b) => b.classList.remove("selected"));
+    optionsList
+      .querySelectorAll(`[data-kind="${kind}"]`)
+      .forEach((b) => b.classList.remove("selected"));
     if (kind === "technique") detectiveState.techniqueSelected = null;
     if (kind === "clue") detectiveState.clueSelected = null;
   }
@@ -462,7 +571,9 @@
       const isCorrect = ds.techniqueOptions[selected] === ds.correctTechnique;
       if (!isCorrect) {
         clearStageSelection("technique");
-        showStageFeedback("Esa técnica no encaja con el ejercicio. Revisa la forma del integrando e intenta de nuevo.");
+        showStageFeedback(
+          "Esa técnica no encaja con el ejercicio. Revisa la forma del integrando e intenta de nuevo.",
+        );
         return;
       }
       state.skills.methodSelection.total += 1;
@@ -480,7 +591,9 @@
       const isCorrect = ds.clueOptions[selected] === ds.correctClue;
       if (!isCorrect) {
         clearStageSelection("clue");
-        showStageFeedback("Esa pista no describe este ejercicio. Lee de nuevo el enunciado e intenta de nuevo.");
+        showStageFeedback(
+          "Esa pista no describe este ejercicio. Lee de nuevo el enunciado e intenta de nuevo.",
+        );
         return;
       }
       ds.stage = "answer";
@@ -511,7 +624,8 @@
       btn.disabled = true;
       const idx = Number(btn.dataset.index);
       if (idx === correctIndex) btn.classList.add("correct");
-      if (idx === selectedIndex && idx !== correctIndex) btn.classList.add("wrong");
+      if (idx === selectedIndex && idx !== correctIndex)
+        btn.classList.add("wrong");
     });
   }
 
@@ -576,7 +690,8 @@
 
     curriculum.forEach((topic) => {
       const stats = state.progress[topic.key] || { correct: 0, total: 0 };
-      const pct = stats.total > 0 ? Math.round((stats.correct / stats.total) * 100) : 0;
+      const pct =
+        stats.total > 0 ? Math.round((stats.correct / stats.total) * 100) : 0;
       const card = document.createElement("div");
       card.className = "progress-card";
       card.innerHTML = `
@@ -589,11 +704,16 @@
 
     const heading = document.createElement("h3");
     heading.textContent = "Habilidades compartidas";
-    heading.style.cssText = "grid-column: 1 / -1; margin: 1rem 0 0; color: var(--ctp-teal);";
+    heading.style.cssText =
+      "grid-column: 1 / -1; margin: 1rem 0 0; color: var(--ctp-teal);";
     progressGrid.appendChild(heading);
 
     Object.entries(state.skills).forEach(([key, s]) => {
-      const label = { recall: "Memoria", methodSelection: "Selección de método", application: "Aplicación" }[key];
+      const label = {
+        recall: "Memoria",
+        methodSelection: "Selección de método",
+        application: "Aplicación",
+      }[key];
       const pct = s.total > 0 ? Math.round((s.correct / s.total) * 100) : 0;
       const card = document.createElement("div");
       card.className = "progress-card";
@@ -617,7 +737,9 @@
   });
 
   tabDerivacion.addEventListener("click", () => selectFormulaTab("derivation"));
-  tabIntegracion.addEventListener("click", () => selectFormulaTab("integration"));
+  tabIntegracion.addEventListener("click", () =>
+    selectFormulaTab("integration"),
+  );
 
   function handleTabKeydown(e) {
     if (e.key === "ArrowLeft" || e.key === "Home") {

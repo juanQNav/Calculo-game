@@ -1,6 +1,6 @@
 # Cálculo A — Juego de Derivadas e Integrales
 
-Sitio estático para estudiantes de Cálculo A. Practica derivadas e integrales en tres modos que comparten progreso — Cartas, Detective y Aventura — o repasa primero el **Formulario** con pestañas de Derivación e Integración. El botón **Home** siempre vuelve a la pantalla de bienvenida. El avance se guarda en el navegador con `localStorage`.
+Sitio estático para estudiantes de Cálculo A. Practica derivadas e integrales en tres modos que comparten progreso — Cartas, Detective y Aventura — o repasa primero el **Formulario** con pestañas de Derivación e Integración. El botón **Home** siempre vuelve a la pantalla de bienvenida. El avance se guarda en el navegador con `localStorage`. En el modo Cartas, una tarjeta marcada para repasar se vuelve a mostrar priorizada después de completar otras dos cartas.
 
 **Jugar en línea:** [Cálculo A en GitHub Pages](https://juanqnav.github.io/Calculo-game/).
 
